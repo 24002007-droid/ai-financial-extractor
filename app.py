@@ -4,13 +4,14 @@ import pandas as pd
 from pypdf import PdfReader
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
 import json
 import time
 
 # ==========================================
 # 1. ĐỊNH NGHĨA KHUÔN CẤU TRÚC DỮ LIỆU
 # ==========================================
+from pydantic import BaseModel, Field
+
 class BaoCaoTaiChinh(BaseModel):
     ten_cong_ty: str = Field(description="Tên đầy đủ của công ty hoặc tập đoàn")
     ma_so_thue: str = Field(description="Mã số thuế của doanh nghiệp, chỉ lấy chữ số")
@@ -28,17 +29,18 @@ st.caption("⚡ Phiên bản tối ưu hóa hiệu suất - Phát triển bởi 
 # Thanh cấu hình bên cạnh
 with st.sidebar:
     st.header("⚙️ Cấu Hình Hệ Thống")
-    gemini_key = st.text_input("Gemini API Key", type="password", value="AIzaSy...")
+    # Đã bỏ chữ mẫu phiền phức, để ô trống hoàn toàn cho pro dán và hiển thị rõ ký tự
+    gemini_key = st.text_input("Dán Gemini API Key của pro vào đây:", value="")
     make_webhook = st.text_input("Make Webhook URL", value="https://hook.eu1.make.com/r7pjukb7wgllvcs9idklpld6mmt8x3yi")
 
-# Ô KÉO THẢ NHIỀU FILE CÙNG LÚC (Kích hoạt accept_multiple_files=True)
+# Ô KÉO THẢ NHIỀU FILE CÙNG LÚC
 uploaded_files = st.file_uploader(
     "📥 Chọn hoặc kéo thả CÙNG LÚC NHIỀU FILE vào đây (Hỗ trợ .pdf, .xlsx, .xls)", 
     type=["pdf", "xlsx", "xls"], 
     accept_multiple_files=True
 )
 
-# Danh sách chứa dữ liệu thô của từng file sau khi đọc
+# Danh sách chứa dữ liệu thô của từng file
 danh_sach_file_cho_xu_ly = []
 
 if uploaded_files:
@@ -47,7 +49,6 @@ if uploaded_files:
     for f in uploaded_files:
         try:
             noi_dung_file = ""
-            # Đọc file PDF
             if f.name.endswith(".pdf"):
                 pdf_reader = PdfReader(f)
                 van_ban_pdf = ""
@@ -57,12 +58,10 @@ if uploaded_files:
                         van_ban_pdf += text + "\n"
                 noi_dung_file = van_ban_pdf
             
-            # Đọc file Excel
             elif f.name.endswith((".xlsx", ".xls")):
                 df = pd.read_excel(f)
                 noi_dung_file = df.to_string()
             
-            # Lưu vào danh sách xử lý nếu đọc thành công dữ liệu chữ
             if noi_dung_file:
                 danh_sach_file_cho_xu_ly.append({
                     "ten_file": f.name,
@@ -75,32 +74,30 @@ if uploaded_files:
 
 # NÚT BẤM KÍCH HOẠT HỆ THỐNG LIÊN THANH
 if st.button("🚀 Bắt Đầu Quét Toàn Bộ File & Đồng Bộ", type="primary"):
+    # Chuẩn hóa chuỗi key: xóa khoảng trắng thừa ở đầu/cuối nếu có
+    pure_key = gemini_key.strip()
+    
     if not danh_sach_file_cho_xu_ly:
         st.warning("Pro ơi, vui lòng tải ít nhất một file lên trước nhé!")
-    elif gemini_key == "" or "AIzaSy" not in gemini_key:
-        st.error("Kiểm tra lại Gemini API Key ở thanh bên cạnh pro ơi!")
+    elif not pure_key:
+        st.error("Pro ơi, ô nhập Gemini API Key hiện tại đang để trống kìa!")
     else:
-        # Khởi tạo thanh tiến trình trực quan
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
-        # Bảng hiển thị kết quả tổng hợp ngay trên Web
         ket_qua_tong_hop = []
         
-        # Khởi tạo Client Gemini đời mới
-        client = genai.Client(api_key=gemini_key)
-        
-        # Vòng lặp "Thần tốc" duyệt qua từng file
-        for idx, item in enumerate(danh_sach_file_cho_xu_ly):
-            ten_file = item["ten_file"]
-            noi_dung = item["noi_dung"]
+        try:
+            # Khởi tạo client với key đã được chuẩn hóa sạch sẽ
+            client = genai.Client(api_key=pure_key)
             
-            status_text.text(f"🤖 AI đang xử lý file ({idx + 1}/{len(danh_sach_file_cho_xu_ly)}): {ten_file}...")
-            
-            try:
+            for idx, item in enumerate(danh_sach_file_cho_xu_ly):
+                ten_file = item["ten_file"]
+                noi_dung = item["noi_dung"]
+                
+                status_text.text(f"🤖 AI đang xử lý file ({idx + 1}/{len(danh_sach_file_cho_xu_ly)}): {ten_file}...")
+                
                 prompt = f"Hãy bóc tách các thông tin tài chính từ dữ liệu file được trích xuất dưới đây:\n{noi_dung}"
                 
-                # Gọi AI bóc tách
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=prompt,
@@ -112,27 +109,21 @@ if st.button("🚀 Bắt Đầu Quét Toàn Bộ File & Đồng Bộ", type="pri
                 )
                 
                 data_clean = json.loads(response.text)
-                data_clean["File Nguồn"] = ten_file # Thêm tên file vào dữ liệu để dễ quản lý
+                data_clean["File Nguồn"] = ten_file
                 ket_qua_tong_hop.append(data_clean)
                 
-                # Bắn sang Make.com để đẩy lên Google Sheets
                 headers = {"Content-Type": "application/json"}
                 requests.post(make_webhook, data=response.text, headers=headers)
                 
-                # Tránh gửi request quá dồn dập làm nghẽn API (nghỉ 0.5 giây mỗi file)
                 time.sleep(0.5)
+                progress_bar.progress((idx + 1) / len(danh_sach_file_cho_xu_ly))
                 
-            except Exception as e:
-                st.error(f"❌ Lỗi khi AI xử lý file {ten_file}: {e}")
+            status_text.text("🎉 Đã hoàn thành xử lý toàn bộ các file!")
+            st.balloons()
             
-            # Cập nhật thanh tiến trình %
-            progress_bar.progress((idx + 1) / len(danh_sach_file_cho_xu_ly))
+            st.subheader("📋 Bảng tổng hợp kết quả bóc tách hàng loạt:")
+            df_ket_qua = pd.DataFrame(ket_qua_tong_hop)
+            st.dataframe(df_ket_qua, use_container_width=True)
             
-        # KẾT THÚC VÒNG LẶP - ĂN MỪNG
-        status_text.text("🎉 Đã hoàn thành xử lý toàn bộ các file!")
-        st.balloons()
-        
-        # Hiển thị bảng tổng hợp dữ liệu cực đẹp ngay trên Web cho pro xem
-        st.subheader("📋 Bảng tổng hợp kết quả bóc tách hàng loạt:")
-        df_ket_qua = pd.DataFrame(ket_qua_tong_hop)
-        st.dataframe(df_ket_qua, use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Hệ thống gặp lỗi xử lý AI: {e}")
